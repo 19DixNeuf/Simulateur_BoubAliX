@@ -1,0 +1,74 @@
+﻿<Window x:Name="mainWindow" x:Class="Simulateur.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Simulateur d'avaries MP14" Height="574.881" Width="1168.5" Icon="Images\Icone.ico" MinWidth="1200" MinHeight="600">
+
+
+
+    <DockPanel LastChildFill="True" Margin="0,0,0,-4">
+        <Menu DockPanel.Dock="Top">
+            <MenuItem Header="_Menu">
+                <MenuItem Header="_Mode hors connexion (protégé)" />
+                <MenuItem Header="_Détails"  Click="btDetailsClick"/>
+                <MenuItem Header="_Aide" />
+                <Separator />
+                <MenuItem Header="_Quitter"  Click="btQuitterClick" />
+            </MenuItem>
+        </Menu>
+
+        <Grid x:Name="Grille1" Margin="0,0,0,0" DockPanel.Dock="Top" Height="509">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="4*"/>
+                <ColumnDefinition Width="11*"/>
+                <ColumnDefinition Width="77*"/>
+                <ColumnDefinition Width="504*"/>
+            </Grid.ColumnDefinitions>
+            <Button x:Name="btConnecter" Content="{Binding btConnexionContent}" HorizontalAlignment="Left" Height="24" Margin="226,10,0,0" VerticalAlignment="Top" Width="94" Click="btConnecterClick" IsEnabled="{Binding btConnexionEnabled}" SnapsToDevicePixels="True" Grid.Column="3"/>
+            <Button x:Name="btOuvrirSession" Content="{Binding btSessionContent}" HorizontalAlignment="Left" Height="24" Margin="226,39,0,0" VerticalAlignment="Top" Width="94" Click="btOuvrirSessionClick" IsEnabled="{Binding btSessionEnabled}" Grid.Column="3"/>
+            <Label Content="Etat connexion:" Height="24" Margin="0,10,16,0" VerticalAlignment="Top" HorizontalAlignment="Right" Width="95" Grid.Column="2"/>
+            <Label Content="Etat session:" Height="24" Margin="0,39,16,0" VerticalAlignment="Top" HorizontalAlignment="Right" Width="79" Grid.Column="2"/>
+            <Label x:Name="lbEtatConnexion" Content="{Binding lbEtatConnexionContent}" HorizontalAlignment="Left" Height="29" Margin="11,10,0,0" VerticalAlignment="Top" Width="144" FontWeight="Bold" Foreground="{Binding lbEtatConnexionForeground}" Grid.Column="3"/>
+            <Label x:Name="lbEtatSession"   Content="{Binding lbEtatSessionContent}" HorizontalAlignment="Left" Height="30" Margin="11,39,0,0" VerticalAlignment="Top" Width="144" FontWeight="Bold" Foreground="{Binding lbEtatSessionForeground}" Grid.Column="3"/>
+            <GroupBox x:Name="gbCleConfirmation" Header="Clé de confirmation" HorizontalAlignment="Left" Height="53" Margin="341,10,0,0" VerticalAlignment="Top" Width="139" Visibility="{Binding gbCleConfirmationVisible}" Grid.Column="3">
+                <Label x:Name="cleConfirmation" Content="??????" HorizontalContentAlignment="Center" HorizontalAlignment="Left" Margin="0,0,-2,-12" Width="129" FontWeight="Bold" FontSize="18.667" Height="43" VerticalAlignment="Top"/>
+            </GroupBox>
+            <Label x:Name="lbEtatSimulateur" Content="{Binding lbEtatSimulateurContent}" HorizontalAlignment="Left" Height="28" Margin="509,15,0,0" VerticalAlignment="Top" Width="292" FontFamily="Courier New" FontStyle="Italic" Visibility="Hidden" Grid.Column="3"/>
+            <Grid x:Name="Grille2" Margin="2,74,10,0" IsEnabled="True" Grid.ColumnSpan="3" Grid.Column="1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="471*"/>
+                    <ColumnDefinition Width="411*"/>
+                    <ColumnDefinition Width="199*"/>
+                </Grid.ColumnDefinitions>
+                <ComboBox x:Name="selFamille" ItemsSource="{Binding listeFamillesScenarios}" DisplayMemberPath="nom" SelectedItem="{Binding familleSelectionnee}" Height="22" Margin="31,10,0,0" VerticalAlignment="Top" IsEnabled="{Binding selFamilleEnabled}" SelectionChanged="selFamille_SelectionChanged"/>
+                <ComboBox x:Name="selScenario" ItemsSource="{Binding listeScenarios}" DisplayMemberPath="Nature" SelectedItem="{Binding scenarioCourant}" Height="22" Margin="31,10,0,0" VerticalAlignment="Top" IsEnabled="{Binding selScenarioEnabled}" Grid.Column="1"/>
+                <Button x:Name="btCharger" Content="Charger" Margin="42,10,68,0" VerticalAlignment="Top" Click="btChargerClick" IsEnabled="{Binding btChargerEnabled}" Grid.Column="2" Height="22"/>
+                <TextBlock x:Name="tbDescriptionScenario" Margin="31,37,10,0" TextWrapping="Wrap" Text="{Binding tbDescriptionScenarioContent}" VerticalAlignment="Top" Height="46" Grid.Column="1" Grid.ColumnSpan="2"/>
+                <GroupBox Header="Messages" Height="89" Margin="11,298,9,0" VerticalAlignment="Top" Grid.ColumnSpan="3">
+                    <Label x:Name="msgInfo" Content="{Binding MessageAffiche}" HorizontalContentAlignment="Center" Margin="4,4,-2,-2" FontWeight="Bold" FontSize="16" />
+                </GroupBox>
+                <Button x:Name="btDemarrer" Content="►" HorizontalAlignment="Left" Margin="57,0,0,11" Width="29" FontFamily="Arial" Click="btDemarrerClick" IsEnabled="{Binding btDemarrerEnabled}" Grid.Column="2" Foreground="{Binding btDemarrerForeground}" Height="30" VerticalAlignment="Bottom"/>
+                <Button x:Name="btStop" Content="&#x25fc;" HorizontalAlignment="Left" Margin="125,0,0,11" Width="29" FontFamily="Arial" Click="btArreterClick" IsEnabled="{Binding btStopEnabled}" Grid.Column="2" Foreground="{Binding btStopForeground}" Height="30" VerticalAlignment="Bottom"/>
+                <Button x:Name="btPause" Content="II" HorizontalAlignment="Left" Margin="91,0,0,11" Width="29"  FontWeight="Bold" FontSize="16" FontFamily="Arial" Click="btDemarrerPauseClick" IsEnabled="{Binding btPauseEnabled}" Visibility="{Binding btPauseVisible}" Grid.Column="2" Height="29" VerticalAlignment="Bottom" Foreground="{Binding btPauseForeground}"/>
+                <Button x:Name="btDemarrerPause" Content="►ӏ" HorizontalAlignment="Left" Margin="91,0,0,11" Width="29" FontFamily="Arial" Click="btDemarrerPauseClick" IsEnabled="{Binding btDemarrerPauseEnabled}"  Visibility="{Binding btDemarrerPauseVisible}" Grid.Column="2" Foreground="{Binding btDemarrerPauseForeground}" FontWeight="Bold" Height="30" VerticalAlignment="Bottom"/>
+                <ScrollViewer Height="158" Margin="10,138,10,0" VerticalAlignment="Top" Grid.ColumnSpan="3" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+                    <GroupBox x:Name="cadreZoneAffichage" Header="Train" Height="136" VerticalAlignment="Top"  Visibility="{Binding gbTrainVisible}" HorizontalAlignment="Left" Width="auto" FlowDirection="LeftToRight">
+                        <StackPanel x:Name="zoneAffichage" Orientation="Horizontal" Margin="2,0,0,5" ScrollViewer.HorizontalScrollBarVisibility="Visible" CanHorizontallyScroll="True" CanVerticallyScroll="True" HorizontalAlignment="Left"/>
+                    </GroupBox>
+                </ScrollViewer>
+                <Grid x:Name="GrilleConfig" Margin="21,83,9,299" Grid.ColumnSpan="3">
+                </Grid>
+            </Grid>
+        </Grid>
+        <Grid x:Name="Grille3" Margin="-2,0,2,0" DockPanel.Dock="Bottom" Height="44">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="106*"/>
+                <ColumnDefinition Width="483*"/>
+                <ColumnDefinition Width="377*"/>
+                <ColumnDefinition Width="109*"/>
+            </Grid.ColumnDefinitions>
+            <Button x:Name="btQuitter" Content="Quitter" Margin="0,0,10,13" Click="btQuitterClick" IsEnabled="{Binding btQuitterEnabled}" Grid.Column="3" HorizontalAlignment="Right" Width="90" Height="21" VerticalAlignment="Bottom"/>
+            <Button x:Name="btDetails" Content="Détails" Margin="10,0,0,13" Click="btDetailsClick" HorizontalAlignment="Left" Width="88" Height="22" VerticalAlignment="Bottom"/>
+        </Grid>
+
+    </DockPanel>
+</Window>

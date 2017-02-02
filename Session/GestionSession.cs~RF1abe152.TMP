@@ -1,0 +1,707 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Collections.Specialized;
+using System.Linq;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Configuration;
+using System.Net;
+using System.IO;
+using System.Windows;
+using System.Windows.Media;
+using System.Security.Cryptography;
+using System.ComponentModel;
+
+namespace Simulateur
+{
+    public class GestionSession : INotifyPropertyChanged
+    {
+        private static readonly log4net.ILog log = log4net.LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
+        string var_compo;           //Variable permettant la lecture du nombre de voiture
+        string var_cab1_active;     //Variable permettant de lire l'état de la cabine 1
+        string var_cab2_active;     //Variable permettant de lire l'état de la cabine 2
+        string var_session_interdite;//Variable permettant de lire l'état de la session: interdite
+        string var_session_authorisee;//Variable permettant de lire l'état de la session: authorisée
+        string var_session_ouverte; //Variable permettant de lire l'état de la session: ouverte
+        string variableMpuMaitre;   //Variable permettant d'identifier le MPU maître
+        string var_mode_train;      //Variable permettant la lecture du monde de conduite du train
+        FenetreIdentification fenetreIdentification;    //Fenêtre servant à entrer les identifiants de connexion
+        Boolean deconnexionDemandee = false;            //Indique lorsqu'une demande de déconnexion a été initiée
+        //Boolean authentificationValidee = false;        //Indique lorsque l'utilisateur est autorisé à interagir ave le train
+        
+        Boolean avorterConnexion = false;               //flag permettant d'avorter la connexion de l'appli en cas de problème
+        ConfigurationTrain cfg;         //Représentation logicielle du train et de ses équipements
+        Communication comObj;           //Pointe vers le module de communication du logiciel avec le train
+        NameValueCollection readConfig = ConfigurationManager.AppSettings;  //Pointe vers App.config
+        //VueConfigurationTrain vueTrain;
+        MainWindow IHM;
+        MessageBoxResult mbResult;
+
+        static BackgroundWorker _bw;
+        static BackgroundWorker _bw_surveillance_connexion;
+
+        Boolean sessionOuverte = false;
+        string _etatSession;                    //Indique l'état de la session
+        public string etatSession
+        {
+            get
+            {
+                return _etatSession;
+            }
+            private set
+            {
+                _etatSession = value;
+                RaisePropertyChanged("etatSession");
+            }
+        }
+
+        Thread Thread_surveillance_connexion;
+        Thread Thread_surveillance_session;
+        /// <summary>
+        /// Constructeur du gestionnaire de session:
+        /// initialise la configuration du projet.
+        /// </summary>
+        public GestionSession()
+        {
+            IHM = (MainWindow)Application.Current.MainWindow;   //Récupération du "pointeur" vers l'IHM
+            //Création et initialisation de la configuration
+            cfg = ConfigurationTrain.Instance;
+            cfg.initialiser();
+            //Lire les variables à utiliser pour,
+            var_compo = cfg.lireVariableComposition();            //Connaitre la composition du train
+            var_cab1_active = cfg.lireVariableCabine1Active();    //Connaitre l'état de la cabine 1 (active ou non)
+            var_cab2_active = cfg.lireVariableCabine2Active();    //Connaitre l'état de la cabine 2 (active ou non)
+            var_session_interdite = cfg.lireVariableSessionInterdite();
+            var_session_authorisee = cfg.lireVariableSessionAuthorisee();
+            var_session_ouverte = cfg.lireVariableSessionOuverte();
+            var_mode_train = cfg.lireVariableModeTrain();
+
+            //vueTrain = new VueConfigurationTrain();
+
+            //Initialisation du thread de connexion au train
+            _bw = new BackgroundWorker();
+            _bw.DoWork += connecter;
+            //Initialisation du thread de surveillance de la connexion au train
+            //_bw_surveillance_connexion = new BackgroundWorker();
+            //_bw_surveillance_connexion.DoWork += surveillerConnexion;//connecter;
+
+            //Vérification de la présence des fichier ETR
+            if (!Directory.Exists(readConfig["cheminETR"] + readConfig["dossierETR"]))
+            {
+                mbResult = MessageBox.Show("Le dossier ETR contenant les paramètres de connexion du train est absent,\n "
+                                                            + "Vérifier la présence du fichier à l'endroi spécifié dans le fichier App.config:"
+                                                            + readConfig["cheminETR"] + readConfig["dossierETR"],
+                                                            "Démarage de session", MessageBoxButton.OK, MessageBoxImage.Stop);
+                IHM.btConnecter.IsEnabled = false;
+            }
+            else if (!Directory.Exists(readConfig["cheminETR"] + readConfig["dossierETR"] + "\\" + readConfig["versionETR"]))
+            {
+                mbResult = MessageBox.Show("Le fichier ETR contenant les paramètres de connexion du train pour la version paramétré est absent,\n "
+                                                            + "Vérifier la présence du fichier à l'endroi spécifié dans le fichier App.config.",
+                                                            "Démarage de session", MessageBoxButton.OK, MessageBoxImage.Stop);
+                IHM.btConnecter.IsEnabled = false;
+            }
+            else
+            {
+                IHM.btConnecter.IsEnabled = true;
+            }
+            IHM.btOuvrirSession.IsEnabled = false;
+            etatSession = "Fermée";
+        }
+        /// <summary>
+        /// Lance la connexion avec le train
+        /// </summary>
+        public void lancerConnexion()
+        {
+            IHM.etatConnexion.Content = "En cours";
+            IHM.etatConnexion.Foreground = Brushes.Orange;
+
+            /*IHM.Afficheur.MessageAffiche = "Connexion en cours";
+            //Etablissement de la commnunication avec le train
+            comObj = Communication.Instance;
+            comObj.init(readConfig["cheminETR"], readConfig["dossierETR"], readConfig["versionETR"]);
+            comObj.Connecter(Dns.GetHostEntry(Dns.GetHostName()).AddressList[0].ToString());
+            if (Thread_surveillance_connexion != null)
+            {
+                Thread_surveillance_connexion.Abort();
+            }
+            Thread_surveillance_connexion = new Thread(() => surveillerConnexion(this));//new ThreadStart(gs.surveillerConnexion));
+            Thread_surveillance_connexion.Start();*/
+            _bw.RunWorkerAsync(this);
+        }
+        /// <summary>
+        /// Thread de connexion
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="e"></param>
+        static private void connecter(object sender, DoWorkEventArgs e)
+        {
+            GestionSession gs;
+
+            Boolean NonclickCancel = true;
+            string versionLogicielLu = "";          //Version logicielle lu sur le MPU
+
+            MessageBoxResult mbResult;
+
+            if (e.Argument is GestionSession)
+            {
+                gs = e.Argument as GestionSession;
+                gs.deconnexionDemandee = false;            //flag permettant de gérer l'affichage du status de la connexion à l'écran
+                gs.avorterConnexion = false;
+
+                gs.IHM.Afficheur.MessageAffiche = "Connexion en cours";
+                //Etablissement de la commnunication avec le train
+                gs.comObj = Communication.Instance;
+                gs.comObj.init(gs.readConfig["cheminETR"], gs.readConfig["dossierETR"], gs.readConfig["versionETR"]);
+                gs.comObj.Connecter(Dns.GetHostEntry(Dns.GetHostName()).AddressList[0].ToString());
+                
+                //Chercher le MPU maître
+                gs.variableMpuMaitre = gs.cfg.lireVariableMpuMaitre();
+
+                Boolean mpuMaitreTrouve = gs.comObj.rechercherMpuMaitre(gs.variableMpuMaitre);
+                if (!mpuMaitreTrouve)
+                {
+                    gs.mbResult = MessageBox.Show("La connexion avec la cible a échouée!\n "
+                                               , "Connexion au train", MessageBoxButton.OK, MessageBoxImage.Stop);
+                    log.Warn("Aucun MPU trouvé.");
+                    gs.avorterConnexion = true;
+                }
+
+                if (!gs.avorterConnexion)
+                {
+                    //Vérifier la version logicielle
+                    versionLogicielLu = gs.comObj.LireVersionLogicielMPU();
+                    if (versionLogicielLu == "")
+                    {
+                        mbResult = MessageBox.Show("La lecture de la version logicielle de la cible a échouée!\n ",
+                                                "Connexion au train", MessageBoxButton.OK, MessageBoxImage.Stop);
+                        log.Warn("La lecture de version MPU a échouée.");
+                        gs.avorterConnexion = true;
+
+                    }
+                }
+
+                if (!gs.avorterConnexion)
+                {
+                    if (versionLogicielLu != gs.readConfig["versionETR"])
+                    {
+                        //chercher dans le dossier courant un dossier du nom de la version lu
+                        if (Directory.Exists(gs.readConfig["cheminETR"] + gs.readConfig["dossierETR"] + "\\" + versionLogicielLu))
+                        {
+                            //Si il est bien présent, la connexion est réinitialisée
+                            gs.comObj.init(gs.readConfig["cheminETR"], gs.readConfig["dossierETR"], versionLogicielLu);
+                            gs.comObj.Connecter(Dns.GetHostEntry(Dns.GetHostName()).AddressList[0].ToString());
+                        }
+                        else
+                        {
+                            //Afficher un message indiquant que le fichier est manquant
+                            mbResult = MessageBox.Show("Le dossier ETR contenant les paramètres de connexion du train ne correspond pas à la version actuelle du train,\n "
+                                                                        + "Version configurée: " + gs.readConfig["versionETR"] + "\nVersion train: " + versionLogicielLu
+                                                                        , "Connexion au train", MessageBoxButton.OK, MessageBoxImage.Stop);
+                            log.Warn("Le dossier ETR contenant les paramètres de connexion du train ne correspond pas à la version actuelle du train,\n "
+                                                                        + "Version configurée: " + gs.readConfig["versionETR"] + "\nVersion train: " + versionLogicielLu);
+
+                            //Arreter le logiciel
+                            gs.avorterConnexion = true;
+                        }
+                    }
+                }
+                if (!gs.avorterConnexion)
+                {
+                    //lancer la surveillance de la connexion
+                    if (gs.Thread_surveillance_connexion != null)
+                    {
+                        gs.Thread_surveillance_connexion.Abort();
+                    }
+                    gs.Thread_surveillance_connexion = new Thread(() => gs.surveillerConnexion(gs));//new ThreadStart(gs.surveillerConnexion));
+                    gs.Thread_surveillance_connexion.Start();
+                    //_bw_surveillance_connexion.RunWorkerAsync(gs);
+                }
+
+                if (!gs.avorterConnexion)
+                {
+                    //Lire puis lancer la configuration train
+                    Boolean cabineEstActivee = false;
+                    do
+                    {
+                        object varLu;
+                        Boolean cab_1_active = false;
+                        Boolean cab_2_active = false;
+                        try
+                        {
+                            cab_1_active = (Boolean)gs.comObj.LireVariable(gs.var_cab1_active);
+                            cab_2_active = (Boolean)gs.comObj.LireVariable(gs.var_cab2_active);
+                        }
+                        catch (Exception ex)
+                        {
+                            log.Error("Echec de la lecture de la cabine active");
+                            log.Debug("Echec de la lecture de la cabine active",ex);
+                            gs.IHM.Afficheur.MessageAffiche="Echec de la lecture de la cabine active";
+                        }
+
+
+                        if (cab_1_active)
+                        {
+                            varLu = gs.comObj.LireVariable(gs.var_compo);
+                            if (!gs.cfg.lireEtatConf())
+                            {
+                                gs.cfg.lancerConfiguration(varLu.ToString(), 1);
+                            }
+                            cabineEstActivee = true;
+                        }
+                        else if (cab_2_active)
+                        {
+                            varLu = gs.comObj.LireVariable(gs.var_compo);
+                            if (!gs.cfg.lireEtatConf())
+                            {
+                                gs.cfg.lancerConfiguration(varLu.ToString(), 2);
+                            }
+                            cabineEstActivee = true;
+                        }
+                        else
+                        {
+                            mbResult = MessageBox.Show("Aucune cabine active!\n "
+                                                   + "Veuillez activer une cabine puis appuyer sur OK",
+                                                   "Connexion au train", MessageBoxButton.OKCancel, MessageBoxImage.Stop);
+
+                            NonclickCancel = mbResult != MessageBoxResult.Cancel;
+
+                        }
+
+
+                    } while (!cabineEstActivee && NonclickCancel);
+
+                    if (!NonclickCancel)
+                    {
+                        mbResult = MessageBox.Show("Une cabine doit être active pour utiliser le simulateur!\n "
+                                                   + "La connexion à la cible est annulée.\n",
+                                                   "Connexion au train", MessageBoxButton.OKCancel, MessageBoxImage.Stop);
+                        gs.lancerDeconnexion();
+                    }
+                    else
+                    {
+                        //Afficher le synoptique train
+                        //gs.vueTrain.lancer();
+                        gs.IHM.Afficheur.MessageAffiche = "Connexion réussie";
+                        //lire le mode de conduite du train
+                        object varLu = gs.comObj.LireVariable(gs.var_mode_train);
+                        if (varLu is string)
+                        {
+                            gs.cfg.reglerModeTrain(varLu as string);
+                        }
+                        
+
+                    }
+                }
+                if (gs.avorterConnexion)
+                {
+                    gs.IHM.Afficheur.MessageAffiche = "La connexion a échouée";
+                    System.Windows.Application.Current.Dispatcher.Invoke(System.Windows.Threading.DispatcherPriority.Normal,
+                                                               (System.Threading.ThreadStart)delegate
+                                                               {
+
+                                                                   gs.IHM.etatConnexion.Content = "déconnecté";
+                                                               });
+                    
+                }
+               /*if (!gs.avorterConnexion)
+                {
+                    //test connexion
+                    System.Diagnostics.Stopwatch timer = new System.Diagnostics.Stopwatch();
+                    timer.Start();
+                    while (timer.ElapsedMilliseconds <= 22000) 
+                    {
+                        gs.IHM.Afficheur.MessageAffiche = gs.comObj.LireStatusConnection();
+                    }
+                    
+                    timer.Stop();
+                    gs.IHM.Afficheur.MessageAffiche = "Fin du test";
+                }*/
+            }
+        }
+
+        /// <summary>
+        /// Déconnecte le logiciel du train
+        /// </summary>
+        public void lancerDeconnexion()
+        {
+            avorterConnexion = true;
+            deconnexionDemandee = true;
+            if (comObj != null)
+                comObj.Deconnecter();
+        }
+        public void lancerIdentification()
+        {
+            //Demander identification
+            fenetreIdentification = new FenetreIdentification(this);
+            fenetreIdentification.Show();
+        }
+        /// <summary>
+        /// Lancer la session de formation
+        /// </summary>
+        public void lancerSession()
+        {
+            string cleConsole = string.Empty;      //clé permettant la confirmation de l'ouverture de session via la console
+            Boolean lecture_cle_OK = false;
+            try
+            {
+                //Lire clé sur MPU
+                cleConsole = comObj.LireVariable(cfg.lireVariableCleConfirmation()).ToString();
+                //Afficher clé à l'écran
+                IHM.affichageCleConfirmation.Visibility = Visibility.Visible;
+                IHM.cleConfirmation.Content = cleConsole;
+                //Affiher message 
+                IHM.Afficheur.MessageAffiche = "Entrer la clé de confirmation sur la console de conduite";
+                lecture_cle_OK = true;
+            }
+            catch (Exception ex)
+            {
+                log.Error("Echec de la lecture de la clé de confirmation");
+                log.Debug("Echec de la lecture de la clé de confirmation", ex);
+                IHM.Afficheur.MessageAffiche = "Echec de la lecture de la clé de confirmation";
+            }
+
+            if (lecture_cle_OK)
+            {
+                Boolean session_interdite = false;
+                Boolean session_authorisee = false;
+                try
+                {
+                    //lecture des jalons de l'ouverture session
+                    session_interdite = (Boolean)comObj.LireVariable(cfg.lireVariableSessionInterdite());
+                    session_authorisee = (Boolean)comObj.LireVariable(cfg.lireVariableSessionAuthorisee());
+
+                }
+                catch (Exception ex)
+                {
+                    log.Error("Echec de la lecture des conditions d'ouverture de session");
+                    log.Debug("Echec de la lecture des conditions d'ouverture de session", ex);
+                    IHM.Afficheur.MessageAffiche = "Echec de la lecture des conditions d'ouverture de session";
+                }
+                //Lancement de la fonction de suivie si les conditions sont remplies
+                if (session_interdite)
+                {
+                    log.Info("Ouverture de session interdite: repréparation du train nécessaire.");
+                    IHM.Afficheur.MessageAffiche = "Ouverture de session interdite: repréparation du train nécessaire.";
+                }
+                else if (!session_authorisee)
+                {
+                    log.Info("Ouverture de session non authorisée: vérifier les conditions d'états du train.");
+                    IHM.Afficheur.MessageAffiche = "Ouverture de session non authorisée: vérifier les conditions d'états du train.";
+                }
+                else
+                {
+                    //Lancer surveillance de session
+                    Thread_surveillance_session = new Thread(() => surveillerSession(this));//(new ThreadStart(surveillerSession));
+                    Thread_surveillance_session.Start();
+                }
+                
+            }
+            
+
+        }
+        /// <summary>
+        /// Fermer la session de formation
+        /// </summary>
+        public void fermerSession()
+        {
+            System.Windows.Application.Current.Dispatcher.Invoke(System.Windows.Threading.DispatcherPriority.Normal,
+                                                               (System.Threading.ThreadStart)delegate
+                                                               {
+
+                                                                   etatSession = "Fermée";
+                                                               });
+            
+            if (Thread_surveillance_session != null)
+                Thread_surveillance_session.Abort();
+            IHM.btOuvrirSession.Content = "Ouvrir session";
+            //IHM.etatSession.Content = "fermée";
+            IHM.etatSession.Foreground = Brushes.Black;
+        }
+        private string _labelConnexion;
+        public string labelConnexion
+        {
+            get
+            {
+                return _labelConnexion;
+            }
+            set
+            {
+                _labelConnexion = value;
+            }
+        }
+        private Brush _couleurLabelConnexion;
+        public Brush couleurLabelConnexion
+        {
+            get
+            {
+                return _couleurLabelConnexion;
+            }
+            set
+            {
+                _couleurLabelConnexion = value;
+            }
+        }
+        /// <summary>
+        /// Surveiller l'état de la connexion avec la cible et l'afficher à l'écran
+        /// </summary>
+        private void surveillerConnexion(GestionSession gs)
+        //static private void surveillerConnexion(object sender, DoWorkEventArgs e)
+        {
+            string etat;
+            //GestionSession gs;
+            //if (e.Argument is GestionSession)
+           // {
+           //     gs = e.Argument as GestionSession;
+                while (true)
+                {
+                    etat = gs.comObj.LireStatusConnection();
+                    System.Windows.Application.Current.Dispatcher.Invoke(System.Windows.Threading.DispatcherPriority.Normal,
+                                                           (System.Threading.ThreadStart)delegate
+                                                           {
+                                                               if (gs.deconnexionDemandee)
+                                                               {
+                                                                   gs.IHM.etatConnexion.Content = "Déconnecté";
+                                                                   gs.IHM.etatConnexion.Foreground = Brushes.Black;
+                                                               }
+                                                               else
+                                                               {
+                                                                   
+                                                                   if (etat == "OK")
+                                                                   {
+                                                                       gs.IHM.etatConnexion.Content = "Connecté";
+                                                                       gs.IHM.etatConnexion.Foreground = Brushes.Green;
+                                                                       gs.IHM.btConnecter.Content = "Déconnecter";
+                                                                       gs.IHM.btOuvrirSession.IsEnabled = true;
+                                                                   }
+                                                                   else
+                                                                   {
+                                                                       gs.IHM.etatConnexion.Content = "Déconnecté";
+                                                                       gs.IHM.etatConnexion.Foreground = Brushes.Black;
+                                                                       gs.IHM.btConnecter.Content = "Connecter";
+                                                                       gs.IHM.btOuvrirSession.IsEnabled = false;
+                                                                   }
+                                                               }
+
+                                                           });
+
+                }
+            //}
+            
+        }
+        /// <summary>
+        /// Surveillance de la session active
+        /// </summary>
+        public void surveillerSession(GestionSession gs)
+        {
+            Boolean enAttenteDuModeFormation = true;
+            
+            Boolean fermerSession = false;
+            Boolean connectionPerdue = false;
+            UInt16 compteur = 0;
+            string etatConnexion;
+            double tempsEcoule;
+            System.Diagnostics.Stopwatch timer = new System.Diagnostics.Stopwatch();
+
+            do
+            {
+                etatConnexion = gs.comObj.LireStatusConnection();
+                if ((etatConnexion != "OK") && !timer.IsRunning)    //Si la connexion vient d'être perdue
+                {
+                    //démarrer timer
+                    timer.Start();
+                }
+                else if ((etatConnexion != "OK") && (timer.ElapsedMilliseconds >= 10000)) //Si la perte de connexion est trop longue
+                {
+                    //fermer session 
+                    fermerSession = true;
+                    //Stopper le timer
+                    timer.Stop();
+                    //Reset le timer
+                    timer.Reset();
+                }
+                else if ((etatConnexion == "OK") && timer.IsRunning)//Si la connexion est rétablit
+                {
+                    //Stopper le timer
+                    timer.Stop();
+                    //Reset le timer
+                    timer.Reset();
+                    //Réhabiliter l'exécution du code
+                    connectionPerdue = false;
+                }
+                else if (etatConnexion == "OK")//Si la connexion est bonne
+                {
+
+                    //Lecture de l'état de la session
+                    try
+                    {
+                        gs.sessionOuverte = (Boolean)comObj.LireVariable(cfg.lireVariableSessionOuverte());
+                    }
+                    catch (SystemException excep)
+                    {
+                        if (excep is System.NullReferenceException)
+                        {
+                            connectionPerdue = true;
+                        }
+                    }
+
+                    //Surveiller si le MPU est toujours Maître
+                    try
+                    {
+                        if (!(Boolean)comObj.LireVariable(variableMpuMaitre))
+                        {
+                            mbResult = MessageBox.Show("Mode formation interrompu !\n "
+                                                       + "Le MPU associé à la session de formation n'est plus l'équipement maître.\n "
+                                                       + "L'intégrité des forçages ne peux plus être assuré:\n"
+                                                       + "Veuiller redémarrer les équipements concernés ou repréparer le train.\n",
+                                                       "Interruption de la session", MessageBoxButton.OK, MessageBoxImage.Stop);
+
+                            fermerSession = true;
+                        }
+                    }
+                    catch (SystemException excep)
+                    {
+                        if (excep is System.NullReferenceException)
+                        {
+                            connectionPerdue = true;
+                        }
+                    }
+
+                    if (!connectionPerdue)
+                    {
+                        if (gs.sessionOuverte)
+                        {
+                            //incrémenter et envoyer bit de vie de la session
+                            if (compteur != 65535)
+                            {
+                                compteur += 1;
+                            }
+                            else
+                            {
+                                compteur = 0;
+                            }
+                            if (!comObj.EcrireVariable(cfg.lireVariableBitDeVie(), compteur))
+                            {
+                                connectionPerdue = true;
+                            }
+                            if (enAttenteDuModeFormation)
+                            {
+                                enAttenteDuModeFormation = false;
+                                //Masquer la clé de confirmation à l'écran
+                                System.Windows.Application.Current.Dispatcher.Invoke(System.Windows.Threading.DispatcherPriority.Normal,
+                                                               (System.Threading.ThreadStart)delegate
+                                                               {
+                                                                   IHM.affichageCleConfirmation.Visibility = Visibility.Hidden;
+                                                                   IHM.Afficheur.MessageAffiche = "Session de formation ouverte";
+                                                                   etatSession = "Ouverte";
+                                                                   //IHM.etatSession.Content = "Ouverte";
+                                                                   IHM.etatSession.Foreground = Brushes.Green;
+                                                                   IHM.btOuvrirSession.Content = "Fermer session";
+                                                               });
+                            }
+
+
+                        }
+                        else if (!gs.sessionOuverte && !enAttenteDuModeFormation)
+                        {
+                            //Afficher "Mode formation interrompu." => TODO
+                            mbResult = MessageBox.Show("Mode formation interrompu !\n "
+                                                       + "Le scénario et la session de formation ont été arrêté. ",
+                                                       "Interruption de la session", MessageBoxButton.OK, MessageBoxImage.Stop);
+                            //Fermer la session de formation
+                            System.Windows.Application.Current.Dispatcher.Invoke(System.Windows.Threading.DispatcherPriority.Normal,
+                                                               (System.Threading.ThreadStart)delegate
+                                                               {
+                                                                   etatSession = "Interrompue";
+                                                               });
+
+                            //Si scenarioEnCours
+                            //interrompre scénario
+                            //Si connexionActive
+                            //RelacherVariable(historique)
+                            //Sinon si !connexionActive
+                            //Afficher "Connexion interrompu"
+                            //conserver historique?--
+                            //Fin si
+                            //Fin si
+                            //Fermer session ?--
+                        }
+                    }
+
+                }
+
+
+
+            } while (!fermerSession);
+            System.Windows.Application.Current.Dispatcher.Invoke(System.Windows.Threading.DispatcherPriority.Normal,
+                                                               (System.Threading.ThreadStart)delegate
+                                                               {
+                                                                   this.fermerSession();
+                                                               });
+
+        }
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="id">identifiant entré par l'utilisateur</param>
+        /// <param name="pwd">mot de passe entré par l'utilisateur</param>
+        /// <returns>vrai lorsque l'authentification est réussi</returns>
+        public Boolean authentifier(string id, string pwd)
+        {
+            string motdepasse = readConfig[id];
+            if (motdepasse == null)
+            {
+                return false;
+            }
+
+            /* //En attente de validation de la méthode d'encryptage
+            
+            byte[] bytesPwd = System.Text.Encoding.Unicode.GetBytes(pwd);                   //Mot de passe entré
+            byte[] bytesPepper = System.Text.Encoding.UTF8.GetBytes(readConfig["pepper"]);  //Code d'entropie
+            byte[] bytesConfPwd = System.Text.Encoding.UTF8.GetBytes(readConfig[id]);       //Mot de passe encodé dans BDD
+            byte[] securedPwd = ProtectedData.Protect(bytesPwd, bytesPepper, DataProtectionScope.CurrentUser);  //Encodage du mot de passe entré
+
+            //--------------------------------------------------------------------
+            string[] lines = { Convert.ToBase64String(securedPwd) };
+            System.IO.File.WriteAllLines(@"C:\Users\e_gquill\Documents\visual studio 2013\Projects\GestionSession_latest\hash.txt", lines);
+            IHM.errorTextBox.Text = Convert.ToBase64String(securedPwd);
+            //--------------------------------------------------------------------
+            */
+            //Compare both keys
+            if (pwd == motdepasse)//bytesConfPwd == securedPwd)
+            {
+                return true;
+            }
+            else
+            {
+                return false;
+            }
+
+        }
+        /// <summary>
+        /// Terminer les threads actifs dans le gestionnaire de session
+        /// </summary>
+        public void terminer()
+        {
+            if (Thread_surveillance_connexion != null)
+                Thread_surveillance_connexion.Abort();
+
+            if (Thread_surveillance_session != null)
+                Thread_surveillance_session.Abort();
+        }
+
+        public event PropertyChangedEventHandler PropertyChanged;
+        private void RaisePropertyChanged(string name)
+        {
+
+            PropertyChangedEventHandler handler = PropertyChanged;
+
+            if (handler != null)
+
+                handler(this, new PropertyChangedEventArgs(name));
+
+        }
+
+    }
+}
